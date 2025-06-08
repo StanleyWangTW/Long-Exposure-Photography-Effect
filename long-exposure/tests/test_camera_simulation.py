@@ -1,26 +1,23 @@
-import cv2
+import numpy as np
 from src.camera_simulation import simulate_camera_response
 
-# 打開影片
-cap = cv2.VideoCapture("test_videos/road2.mp4")
+def test_avg_mode_output_gray():
+    img1 = np.ones((100, 100, 3), dtype=np.uint8) * 60
+    img2 = np.ones((100, 100, 3), dtype=np.uint8) * 180
+    result = simulate_camera_response([img1, img2], mode="average")
+    pixel = result[0, 0, 0]
+    assert 110 <= pixel <= 130, "Average mode pixel not in expected range"
 
-frames = []
-count = 0
-MAX_FRAMES = 30  # 你可以調整要取幾幀
+def test_sum_mode_clip():
+    img1 = np.ones((100, 100, 3), dtype=np.uint8) * 200
+    img2 = np.ones((100, 100, 3), dtype=np.uint8) * 200
+    result = simulate_camera_response([img1, img2], mode="sum")
+    pixel = result[0, 0, 0]
+    assert pixel == 255, "Sum mode did not clip correctly"
 
-while count < MAX_FRAMES:
-    ret, frame = cap.read()
-    if not ret:
-        break
-    frames.append(frame)
-    count += 1
-
-cap.release()
-
-# 執行 camera 模擬
-#
-output_img = simulate_camera_response(frames)
-
-# 儲存結果
-cv2.imwrite("output_long_exposure.png", output_img)
-print("儲存結果至 output_long_exposure.png")
+def test_max_mode_value():
+    img1 = np.zeros((100, 100, 3), dtype=np.uint8)
+    img2 = np.ones((100, 100, 3), dtype=np.uint8) * 150
+    result = simulate_camera_response([img1, img2], mode="max")
+    pixel = result[0, 0, 0]
+    assert pixel == 150, "Max mode failed to select max value"
