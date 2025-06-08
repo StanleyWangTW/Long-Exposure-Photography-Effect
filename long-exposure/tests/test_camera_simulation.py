@@ -18,6 +18,7 @@ while count < MAX_FRAMES:
 cap.release()
 
 # 執行 camera 模擬
+#
 output_img = simulate_camera_response(frames)
 
 # 儲存結果
