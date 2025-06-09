@@ -2,19 +2,21 @@ import logging
 import os
 
 import numpy as np
+import cupy as cp
 import cv2
-# import click
 from tqdm import tqdm
+
+from camera_simulation import srgb_to_linear, linear_to_srgb
+
 
 logging.basicConfig(level=logging.INFO)
 
-
 class LongExposure:
-    def __init__(self, video, output_image_path, step=1, method='max'):
+    def __init__(self, video, output_image_path, step=1, p=15):
         self.video = video
         self.output_image_path = output_image_path
         self.step = step
-        self.method = method
+        self.p = p
 
     def max_pool2d(self, img, size=2, stride=1):
         h, w = img.shape
@@ -40,48 +42,41 @@ class LongExposure:
 
         # Get the total frames to be used by the progress bar
         total_frames = int(stream.get(cv2.CAP_PROP_FRAME_COUNT))
-        # secs = 2.4
-        # total_frames = int(round(fps * secs))
-
-        r, g, b = None, None, None
+        secs = 4
+        total_frames = int(round(fps * secs))
 
         for count in tqdm(range(total_frames)):
             # Split the frame into its respective channels
             _, frame = stream.read()
+            frame = srgb_to_linear(frame.astype("float"))
 
             if count % self.step == 0 and frame is not None:
                 # Get the current RGB
                 b_curr, g_curr, r_curr = cv2.split(frame.astype("float"))
 
                 # If the first frame, initialize the RGB arrays
-                if r is None or g is None or b is None:
-                    r = np.zeros_like(b_curr, dtype="float")
-                    g = np.zeros_like(g_curr, dtype="float")
-                    b = np.zeros_like(r_curr, dtype="float")
+                if count == 0:
+                    r = cp.zeros_like(r_curr, dtype="float")
+                    g = cp.zeros_like(g_curr, dtype="float")
+                    b = cp.zeros_like(r_curr, dtype="float")
 
-                if self.method == 'max':
-                    # Use max pooling to accumulate the values
-                    r[r_curr > r] = r_curr[r_curr > r]
-                    g[g_curr > g] = g_curr[g_curr > g]
-                    b[b_curr > b] = b_curr[b_curr > b]
-                elif self.method == 'avg':
-                    p = 15
-                    # Use average pooling to accumulate the values
-                    b += np.power(b_curr, p) / (total_frames // self.step)
-                    r += np.power(r_curr, p) / (total_frames // self.step)
-                    g += np.power(g_curr, p) / (total_frames // self.step)
+                b_curr, g_curr, r_curr = cp.asarray(b_curr), cp.asarray(g_curr), cp.asarray(r_curr)
 
-        r = np.power(r, 1/p)
-        g = np.power(g, 1/p)
-        b = np.power(b, 1/p)
+                p = 15
+                # Use average pooling to accumulate the values
+                b += cp.power(b_curr, self.p) / (total_frames // self.step)
+                g += cp.power(g_curr, self.p) / (total_frames // self.step)
+                r += cp.power(r_curr, self.p) / (total_frames // self.step)
 
-        r = np.clip(r, 0, 255)
-        g = np.clip(g, 0, 255)
-        b = np.clip(b, 0, 255)
-        long_exposure_img = cv2.merge([b, g, r]).astype("uint8")
+        r, g, b = cp.power(r, 1/self.p), cp.power(g, 1/self.p), cp.power(b, 1/self.p)
+
+        r, g, b = cp.clip(r, 0, 255), cp.clip(g, 0, 255), cp.clip(b, 0, 255)
+        r, g, b = cp.asnumpy(r), cp.asnumpy(g), cp.asnumpy(b)
+        long_exposure_img = cv2.merge([b, g, r])
+        long_exposure_img = linear_to_srgb(long_exposure_img)
 
         logging.info("Saving image as %r", self.output_image_path)
-        cv2.imwrite(self.output_image_path, long_exposure_img)
+        cv2.imwrite(self.output_image_path, long_exposure_img.astype("uint8"))
 
         # Release the stream pointer
         stream.release()
@@ -107,9 +102,8 @@ class LongExposure:
 if __name__ == "__main__":
     test_dir = r'E:\計算攝影學\Long-Exposure-Photography-Effect\test_videos'
 
-    method = 'avg'  # max or 'avg'
-    video_path = os.path.join(test_dir, "lightsaber2.mp4")
-    output_image_path = os.path.basename(video_path).replace(".mp4", f"_{method}.png")
+    video_path = os.path.join(test_dir, "cross_section_aligned.mp4")
+    output_image_path = os.path.basename(video_path).replace(".mp4", f".png")
     
-    long_exposure = LongExposure(video_path, output_image_path, step=1, method=method)
+    long_exposure = LongExposure(video_path, output_image_path, step=1)
     long_exposure()
