@@ -18,19 +18,6 @@ class LongExposure:
         self.method = method
         self.secs = secs
 
-    def max_pool2d(self, img, size=2, stride=1):
-        h, w = img.shape
-        out_h = (h - size) // stride + 1
-        out_w = (w - size) // stride + 1
-        pooled = np.zeros((out_h, out_w))
-
-        for i in range(out_h):
-            for j in range(out_w):
-                window = img[i*stride:i*stride+size, j*stride:j*stride+size]
-                pooled[i, j] = np.max(window)
-
-        return pooled
-    
     def frame_stack(self):
 
         ''' Process the video file to create a long exposure image by frames.'''
