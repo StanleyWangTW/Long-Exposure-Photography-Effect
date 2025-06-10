@@ -2,13 +2,14 @@ import cv2
 import numpy as np
 from tqdm import tqdm
 
-def my_align_images(input_video, output_video):
-    
+'''Aligns video frames using SIFT feature matching and homography estimation.'''
+
+def align_video(input_video, output_video):
+    # take frame at (# of frames // 2) as reference image
     cap = cv2.VideoCapture(input_video)
     FPS = cap.get(cv2.CAP_PROP_FPS)
     TOTAL_FRAMES = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
-    # reference image
     ref_gray = None
     for frame_idx in range(TOTAL_FRAMES):
         _, frame = cap.read()
@@ -27,6 +28,7 @@ def my_align_images(input_video, output_video):
     kp_ref, des_ref = sift.detectAndCompute(ref_gray, None)
 
     # read video and align frames
+    print(f"Aligning video frames of {input_video}")
     cap = cv2.VideoCapture(input_video)
     for fname_idx in tqdm(range(TOTAL_FRAMES)):
         # skip reference image
@@ -42,14 +44,14 @@ def my_align_images(input_video, output_video):
         matches = matcher.match(des, des_ref)
 
         if len(matches) < 4:
-            print(f"[警告] {frame_idx} 匹配點不足，跳過")
+            print(f"Not enough matches found for frame {fname_idx}. Skipping alignment.")
             continue
 
         # create homography
         src_pts = np.float32([kp[m.queryIdx].pt for m in matches]).reshape(-1, 1, 2)
         dst_pts = np.float32([kp_ref[m.trainIdx].pt for m in matches]).reshape(-1, 1, 2)
 
-        H, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
+        H, _ = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
 
         aligned = cv2.warpPerspective(img, H, (ref_gray.shape[1], ref_gray.shape[0]))
         video_writer.write(aligned)
@@ -57,8 +59,8 @@ def my_align_images(input_video, output_video):
     cap.release()
     video_writer.release()
 
-if __name__ == "__main__":
-    # 將影片轉換為圖片
-    my_align_images(r'E:\計算攝影學\Long-Exposure-Photography-Effect\test_videos\road1.mp4',
-                    r'E:\計算攝影學\Long-Exposure-Photography-Effect\test_videos\road1_aligned.mp4')
+    print(f"Aligned video saved to {output_video}")
 
+if __name__ == "__main__":
+    input_video = r'test_videos\road1.mp4'
+    align_video(input_video, input_video.replace('.mp4', '_aligned.mp4'))
