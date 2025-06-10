@@ -1,8 +1,12 @@
+'''Output a video whose each frame is foreground mask of a video using ViBe (Video Backgound Extraction)).'''
+
 import numpy as np
+import cupy as cp
 import cv2
 from tqdm import tqdm
 
-'''Output a video whose each frame is foreground mask of a video using ViBe (Video Backgound Extraction)).'''
+from utils import srgb_to_linear, linear_to_srgb
+
 
 class ViBe:
     def __init__(self, input_video, num_samples=20, min_matches=2, radius=20, subsample_factor=16):
@@ -54,7 +58,7 @@ class ViBe:
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         out = cv2.VideoWriter(output_video, fourcc, cap.get(cv2.CAP_PROP_FPS), (gray.shape[1], gray.shape[0]), isColor=False)
 
-        print(f"Processing video {self.input_video} with {total_frames} frames")
+        print(f"ViBe: Segmenting video {self.input_video}")
         for _ in tqdm(range(total_frames-1)):
             _, frame = cap.read()
 
@@ -63,11 +67,58 @@ class ViBe:
 
             out.write(fg_mask.astype('uint8'))
 
-        print(f'Video processing complete. Output saved to: {output_video}')
+        print(f'ViBe processing complete. Output saved to: {output_video}')
         cap.release()
         out.release()
 
+    def get_mask(self):
+        output_image_path = self.input_video.replace('.mp4', '_fg.png')
+        p = 2.5
+
+        cap = cv2.VideoCapture(self.input_video.replace('.mp4', '_fg.mp4'))
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
+        print('Creating final output mask from ViBe output video...')
+        for count in tqdm(range(total_frames)):
+            _, frame = cap.read()
+            frame = srgb_to_linear(frame.astype("float"))
+
+            if frame is not None:
+                # current frame RGB
+                b_curr, g_curr, r_curr = cv2.split(frame.astype("float"))
+
+                # If first frame, initialize arrays
+                if count == 0:
+                    r = cp.zeros_like(r_curr, dtype="float")
+                    g = cp.zeros_like(g_curr, dtype="float")
+                    b = cp.zeros_like(r_curr, dtype="float")
+
+                b_curr, g_curr, r_curr = cp.asarray(b_curr), cp.asarray(g_curr), cp.asarray(r_curr)
+
+                b += cp.power(b_curr, p)
+                g += cp.power(g_curr, p)
+                r += cp.power(r_curr, p)
+
+        cap.release()
+
+        r = cp.power(r / total_frames, 1/p)
+        g = cp.power(g / total_frames, 1/p)
+        b = cp.power(b / total_frames, 1/p)
+
+        r, g, b = cp.asnumpy(r), cp.asnumpy(g), cp.asnumpy(b)
+        long_exposure_img = cv2.merge([b, g, r])
+        fg_mask = linear_to_srgb(long_exposure_img).astype("uint8")
+
+        fg_mask = cv2.cvtColor(fg_mask, cv2.COLOR_BGR2GRAY)
+        _, fg_mask = cv2.threshold(fg_mask, 127, 255, cv2.THRESH_BINARY)
+
+        cv2.imwrite(output_image_path, fg_mask)
+        print(f"Foreground mask saved as {output_image_path}")
+
+    def get_mask_path(self):
+        return self.input_video.replace('.mp4', '_fg.png')
+
 
 if __name__ == "__main__":
-    vibe = ViBe(input_video=r'test_videos\cross_section.mp4')
-    vibe.get_mask_video()
+    vibe = ViBe(input_video=r'test_videos\cross_section_aligned.mp4')
+    vibe.get_mask()

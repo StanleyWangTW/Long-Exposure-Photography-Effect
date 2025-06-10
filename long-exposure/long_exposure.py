@@ -6,26 +6,9 @@ import cupy as cp
 import cv2
 from tqdm import tqdm
 
-
-def srgb_to_linear(img_srgb):
-    img_srgb = img_srgb / 255.0
-    threshold = 0.04045
-    below = img_srgb <= threshold
-    above = img_srgb > threshold
-    img_linear = np.zeros_like(img_srgb)
-    img_linear[below] = img_srgb[below] / 12.92
-    img_linear[above] = ((img_srgb[above] + 0.055) / 1.055) ** 2.4
-    return img_linear
-
-
-def linear_to_srgb(img_linear):
-    threshold = 0.0031308
-    below = img_linear <= threshold
-    above = img_linear > threshold
-    img_srgb = np.zeros_like(img_linear)
-    img_srgb[below] = img_linear[below] * 12.92
-    img_srgb[above] = 1.055 * (img_linear[above] ** (1 / 2.4)) - 0.055
-    return np.clip(img_srgb * 255.0, 0, 255).astype(np.uint8)
+from utils import srgb_to_linear, linear_to_srgb
+from motion_correction import align_video
+from ViBe import ViBe
 
 
 class LongExposure:
@@ -49,18 +32,19 @@ class LongExposure:
         return pooled
     
     def frame_stack(self):
+
         ''' Process the video file to create a long exposure image by frames.'''
-        print(f"Processing video {self.video}")
 
         cap = cv2.VideoCapture(self.video)
         FPS = round(cap.get(cv2.CAP_PROP_FPS))
-        print(f'FPS: {FPS}')
-        
+        print(f"Creating long-exposure image using {self.video} (FPS: {FPS}) ...")
+
         if self.secs is not None:
             total_frames = int(round(FPS * self.secs))
         else:
             total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
+        print(f"Frame stacking method: {self.method}")
         for count in tqdm(range(total_frames)):
             _, frame = cap.read()
             frame = srgb_to_linear(frame.astype("float"))
@@ -117,32 +101,66 @@ class LongExposure:
         long_exposure_img = cv2.merge([b, g, r])
         long_exposure_img = linear_to_srgb(long_exposure_img).astype("uint8")
 
-        print(f"Saving image as {self.output_image_path}")
+        print(f"Long-exposure image saved as {self.output_image_path}")
         cv2.imwrite(self.output_image_path, long_exposure_img.astype("uint8"))
 
-    def fg_mask_process(self):
-        ''' Post-process the long exposure image'''
-        fg_mask = cv2.imread(self.output_image_path)
-        fg_mask = cv2.cvtColor(fg_mask, cv2.COLOR_BGR2GRAY)
-        _, fg_mask = cv2.threshold(fg_mask, 127, 255, cv2.THRESH_BINARY)
+    def post_photoshop(self, fg_mask):
+        print(self.output_image_path)
+        long_exposure = cv2.imread(self.output_image_path).astype('float32')
+        fg_mask = cv2.imread(fg_mask) / 255.0
 
-        cv2.imwrite(self.output_image_path, fg_mask)
+        moving_part = long_exposure * fg_mask
+
+        # Convert to HLS and adjust saturation (or other photoshop process you want)
+        moving_part = cv2.cvtColor(moving_part.astype('uint8'), cv2.COLOR_BGR2HLS)
+        H, L, S = cv2.split(moving_part.astype('float32'))
+
+        S = np.power(S / 255, 1/1.5) * 255
+
+        H = np.clip(H, 0, 180)
+        L = np.clip(L, 0, 255)
+        S = np.clip(S, 0, 255)
+        moving_part = cv2.merge([H, L, S])
+        moving_part = cv2.cvtColor(moving_part.astype('uint8'),
+                                   cv2.COLOR_HLS2BGR).astype('float32')
+
+
+        long_exposure_img = moving_part + long_exposure * (1 - fg_mask)
+
+        cv2.imwrite(f"{self.output_image_path.replace('.png', '')}_long_exposure.png", long_exposure_img.astype('uint8'))
+        print(f"Post-photoshop image saved as {self.output_image_path.replace('.png', '')}_long_exposure.png")
+
 
     def __call__(self):
         self.frame_stack()
 
 
 if __name__ == "__main__":
-    test_dir = r'E:\計算攝影學\Long-Exposure-Photography-Effect\test_videos'
+    test_dir = r'test_videos'
 
     method = 'weighted'
+    align = False # Set to True if you want to align the video frames (motion correction) before processing
 
-    video_path = os.path.join(test_dir, 'road1_aligned.mp4')
+    video_path = os.path.join(test_dir, 'road2.mp4') # path of the input video file
 
+    # output image path
     out_dir = join('results', basename(video_path).split('.')[0])
     os.makedirs(out_dir, exist_ok=True)
-
     output_image_path = join(out_dir, basename(video_path).replace(".mp4", f"_{method}.png"))
 
+    # video motion correction
+    if align:
+        align_video(video_path, video_path.replace('.mp4', '_aligned.mp4'))
+        video_path = video_path.replace('.mp4', '_aligned.mp4')
+
+    # # long exposure image synthesis using video frames
     long_exposure = LongExposure(video_path, output_image_path, method)
     long_exposure()
+
+    # creating foreground mask using ViBe
+    vibe = ViBe(video_path)
+    vibe.get_mask_video()
+    vibe.get_mask()
+
+    # post-photoshop using foreground mask
+    long_exposure.post_photoshop(vibe.get_mask_path())
