@@ -126,9 +126,10 @@ if __name__ == "__main__":
     test_dir = r'test_videos'
 
     method = 'weighted'
-    align = False # Set to True if you want to align the video frames (motion correction) before processing
+    align = True # Set to True if you want to align the video frames (motion correction) before processing
+    light_trail_photoshop = True
 
-    video_path = os.path.join(test_dir, 'road2.mp4') # path of the input video file
+    video_path = os.path.join(test_dir, 'spot_light2.mp4') # path of the input video file
 
     # output image path
     out_dir = join('results', basename(video_path).split('.')[0])
@@ -144,10 +145,11 @@ if __name__ == "__main__":
     long_exposure = LongExposure(video_path, output_image_path, method)
     long_exposure()
 
-    # creating foreground mask using ViBe
-    vibe = ViBe(video_path)
-    vibe.get_mask_video()
-    vibe.get_mask()
+    if light_trail_photoshop:
+        # creating foreground mask using ViBe
+        vibe = ViBe(video_path)
+        vibe.get_mask_video()
+        vibe.get_mask()
 
-    # post-photoshop using foreground mask
-    long_exposure.post_photoshop(vibe.get_mask_path())
+        # post-photoshop using foreground mask
+        long_exposure.post_photoshop(vibe.get_mask_path())
